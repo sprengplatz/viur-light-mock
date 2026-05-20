@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viur-light-mock"
+dynamic = ["version"]
+description = "Pytest helpers and viur-core stand-ins for testing ViUR packages without App Engine."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [
+    { name = "Andreas H. Kelch" },
+]
+keywords = ["viur", "testing", "pytest", "mocks", "stubs"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Pytest",
+    "Framework :: ViUR",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Testing :: Mocking",
+]
+dependencies = [
+    "pytest>=8.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest-cov~=5.0",
+    "coverage[toml]~=7.0",
+]
+dev = [
+    "viur-light-mock[test]",
+    "build~=1.2",
+]
+
+[project.entry-points.pytest11]
+viur_light_mock = "viur.light_mock.plugin"
+
+[project.urls]
+Homepage = "https://github.com/sprengplatz/viur-light-mock"
+Repository = "https://github.com/sprengplatz/viur-light-mock.git"
+"Bug Tracker" = "https://github.com/sprengplatz/viur-light-mock/issues"
+Changelog = "https://github.com/sprengplatz/viur-light-mock/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "viur.light_mock.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["viur.*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# IMPORTANT: this package *is* the pytest plugin under test. pytest-cov starts
+# instrumenting *after* entry-point plugins are imported, so its measurement of
+# ``viur.light_mock.plugin`` would be incomplete. Instead, run the test suite
+# through ``coverage run -m pytest`` (CI does this) and call
+# ``coverage report --fail-under=100`` to enforce the gate. Locally,
+# ``coverage run -m pytest && coverage report`` works the same way.
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+filterwarnings = [
+    "error",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["viur.light_mock"]
+# Run as: ``coverage run -m pytest`` (so plugin import is instrumented).
+
+[tool.coverage.report]
+exclude_also = [
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if t\\.TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+show_missing = true
+skip_covered = false
