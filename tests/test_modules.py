@@ -91,7 +91,19 @@ def test_default_render_methods_return_origin_tuples():
     assert r.list(["a", "b"])[0] == "orig-list"
     assert r.add("skel-x")[0] == "orig-add"
     assert r.edit("skel-x")[0] == "orig-edit"
-    assert r.delete("skel-x")[0] == "orig-delete"
+    assert r.addSuccess("skel-x")[0] == "orig-addSuccess"
+    assert r.editSuccess("skel-x")[0] == "orig-editSuccess"
+    assert r.deleteSuccess("skel-x")[0] == "orig-deleteSuccess"
+
+
+def test_default_render_does_not_carry_delete():
+    """``DefaultRender.delete`` does not exist on the upstream renderer
+    (viur-core routes delete through ``deleteSuccess``). The stand-in
+    must stay symmetric with that or downstream packages risk patching
+    a method that does not exist in production."""
+    install_viur_core_mocks()
+    from viur.core.render.json.default import DefaultRender
+    assert not hasattr(DefaultRender, "delete")
 
 
 def test_default_render_structure_is_pass_through_staticmethod():

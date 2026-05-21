@@ -168,10 +168,19 @@ def _make_render_module() -> tuple[types.ModuleType, types.ModuleType, types.Mod
         """Stand-in for viur.core.render.json.default.DefaultRender.
 
         Carries the same surface the renderer-patch code needs to wrap
-        (``view``/``list``/``add``/``edit``/``delete`` + ``kind`` attr +
-        ``render_structure`` staticmethod). Each method returns a tuple
-        that identifies the call — tests can assert against those to
-        detect whether the original or the patched code path executed.
+        (``view`` / ``list`` / ``add`` / ``edit`` plus the success
+        siblings ``addSuccess`` / ``editSuccess`` / ``deleteSuccess``,
+        the ``kind`` attribute and the ``render_structure`` staticmethod).
+        Each method returns a tuple identifying the call — tests can
+        assert against those to detect whether the original or the
+        patched code path executed.
+
+        Deliberately does **not** carry a ``delete`` method: upstream
+        viur-core has none, and its prototypes route the delete flow
+        through ``deleteSuccess`` directly. Keeping the stand-in
+        symmetric with the real renderer prevents downstream packages
+        from accidentally patching a method that does not exist in
+        production.
         """
 
         kind = "json"
@@ -193,8 +202,14 @@ def _make_render_module() -> tuple[types.ModuleType, types.ModuleType, types.Mod
         def edit(self, skel, action="edit", params=None, **kwargs):
             return ("orig-edit", skel, action, params)
 
-        def delete(self, skel, action="delete", params=None, **kwargs):
-            return ("orig-delete", skel, action, params)
+        def addSuccess(self, skel, action="addSuccess", params=None, **kwargs):
+            return ("orig-addSuccess", skel, action, params)
+
+        def editSuccess(self, skel, action="editSuccess", params=None, **kwargs):
+            return ("orig-editSuccess", skel, action, params)
+
+        def deleteSuccess(self, skel, action="deleteSuccess", params=None, **kwargs):
+            return ("orig-deleteSuccess", skel, action, params)
 
     render_json_default.DefaultRender = DefaultRender
     return render, render_json, render_json_default
