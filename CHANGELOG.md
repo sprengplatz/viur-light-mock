@@ -7,6 +7,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- PyPI distribution name is now **`spltz-viur-light-mock`** (the
+  experimental `spltz-` prefix marks the package pre-1.0). The
+  Python import path stays `viur.light_mock` — namespace package,
+  no rename in user code. Consumers should update their
+  `pyproject.toml`:
+
+      test = ["pytest", "pytest-cov", "spltz-viur-light-mock>=0.1"]
+
 ## [0.1.0] - 2026-05-20
 
 ### Added

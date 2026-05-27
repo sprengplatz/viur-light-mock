@@ -25,15 +25,20 @@ fixtures and mocks are there.
 
 ## Install
 
+The PyPI distribution name is `spltz-viur-light-mock` (the
+experimental `spltz-` prefix marks it pre-1.0). The Python import
+path stays `viur.light_mock` — namespace package, no rename in user
+code.
+
 ```bash
-pip install viur-light-mock
+pip install spltz-viur-light-mock
 ```
 
 For a ViUR-based package that wants to use it:
 
 ```toml
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov", "viur-light-mock>=0.1"]
+test = ["pytest", "pytest-cov", "spltz-viur-light-mock>=0.1"]
 ```
 
 ## Usage
