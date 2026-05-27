@@ -68,7 +68,7 @@ them up in a `conftest.py`.
 
 | Module                          | Stand-in surface                                                                |
 | ------------------------------- | ------------------------------------------------------------------------------- |
-| `viur.core`                     | Plus identity decorators `exposed`, `force_post`, `skey`                        |
+| `viur.core`                     | Identity decorators `exposed`, `force_post`, `skey`; `conf` attr               |
 | `viur.core.db`                  | `Key`, `Entity`, `Query`, `SortOrder`, `Get`, `Put`, `Delete`, `AllocateIDs`    |
 | `viur.core.utils`               | `utcNow()` — freezable                                                          |
 | `viur.core.errors`              | `Unauthorized`, `Forbidden`, `BadRequest`, `NotFound`                           |
@@ -76,6 +76,7 @@ them up in a `conftest.py`.
 | `viur.core.skeleton`            | `Skeleton`, `SkeletonInstance`, `DatabaseAdapter`                               |
 | `viur.core.tasks`               | `PeriodicTask` decorator (no-op, but tags the wrapped function)                 |
 | `viur.core.render.json.default` | `CustomJsonEncoder` aliased to stdlib `json.JSONEncoder`                        |
+| `viur.core.bones.base`          | `ReadFromClientError`, `ReadFromClientErrorSeverity`                            |
 
 ## Fixtures
 
@@ -112,7 +113,12 @@ out of the box.
 git clone https://github.com/sprengplatz/viur-light-mock
 cd viur-light-mock
 pip install -e ".[dev]"
-pytest                  # 100% coverage required
+
+# Run via `coverage run` so the plugin import itself is instrumented.
+# pytest-cov would start measuring after the entry-point plugin loads,
+# leaving viur.light_mock.plugin partially uncovered.
+coverage run -m pytest
+coverage report --fail-under=100
 ```
 
 ## License
