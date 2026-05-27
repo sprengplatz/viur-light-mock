@@ -58,7 +58,11 @@ jobs:
       - name: Compare
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(python -c "import re; t=open('src/viur/light_mock/__init__.py').read(); print(re.search(r'__version__ = [\"\\'']([^\"\\'']+)[\"\\'']', t).group(1))")
+          # Install the package itself (no deps — pytest et al. not needed)
+          # and read `__version__` via a regular import. Avoids the quoting
+          # hell of inlining a regex into a YAML→bash→python triple.
+          python -m pip install --no-deps -e .
+          PKG=$(python -c "from viur.light_mock import __version__; print(__version__)")
           echo "Tag version:     $TAG"
           echo "Package version: $PKG"
           if [ "$TAG" != "$PKG" ]; then
