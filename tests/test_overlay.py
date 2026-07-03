@@ -50,6 +50,18 @@ def test_db_overlay_get_returns_pinned_result_when_sentinel_overridden(monkeypat
     assert db.get(db.Key("thing", 1)) is pinned
 
 
+def test_db_overlay_get_batch_returns_list_aligned_to_input_keys(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    found = db.Entity(db.Key("thing", 1))
+    db.put(found)
+    missing_key = db.Key("thing", 2)
+
+    result = db.get([found.key, missing_key])
+
+    assert result == [found, None]
+
+
 def test_db_overlay_allocate_ids_returns_a_list_of_recorded_keys(monkeypatch):
     import viur.core.db as db
     state = install_db_overlay(monkeypatch)
