@@ -32,6 +32,11 @@ def install_db_overlay(monkeypatch, *, state: DbState = db_state) -> DbState:
     def _get(key):
         if state.get_result != "USE_STORE":
             return state.get_result
+        # Real db.Get accepts a single key or a sequence of keys (batch get) and
+        # returns a list aligned to the input (None for misses). Relation
+        # serialization (RefSkel denormalization) relies on the batch form.
+        if isinstance(key, (list, tuple)):
+            return [state.store.get(k) for k in key]
         return state.store.get(key)
 
     def _put(entity):
