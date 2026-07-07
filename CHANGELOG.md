@@ -7,6 +7,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-07
+
+### Added
+
+- **Overlay mode** for test suites that run against a *real* installed
+  viur-core. `install_db_overlay(monkeypatch)` monkeypatches only the
+  external Datastore seams (`db.get`/`put`/`delete`/`allocate_ids` and
+  their capitalized aliases, plus `RunInTransaction`) onto the in-memory
+  `db_state`, leaving real bone serialization, compute bones and tree
+  logic running. `set_request(monkeypatch, **attrs)` swaps
+  `current.request` for a throwaway namespace. Both are undone after the
+  test. New public exports: `install_db_overlay`, `set_request`.
+- Batch `db.get([...])` support in overlay mode: a sequence of keys
+  returns a list aligned to the input (`None` for misses), as relation
+  (RefSkel) denormalization expects.
+
 ### Changed
 
 - PyPI distribution name is now **`spltz-viur-light-mock`** (the
@@ -16,6 +32,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `pyproject.toml`:
 
       test = ["pytest", "pytest-cov", "spltz-viur-light-mock>=0.1"]
+
+### Fixed
+
+- The pytest plugin no longer installs the fake `viur.core.*` hierarchy
+  when a real viur-core is importable. Previously the stand-ins were
+  injected unconditionally on plugin load, clobbering a real framework
+  before overlay mode could patch it. The plugin now auto-detects which
+  mode applies (`importlib.util.find_spec`) and leaves a real viur-core
+  untouched.
 
 ## [0.1.0] - 2026-05-20
 
@@ -34,5 +59,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Pytest fixtures: `db_state`, `freeze_time`, `make_query`, `patched_user`,
   plus an autouse state reset.
 
-[Unreleased]: https://github.com/sprengplatz/viur-light-mock/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/sprengplatz/viur-light-mock/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sprengplatz/viur-light-mock/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sprengplatz/viur-light-mock/releases/tag/v0.1.0
