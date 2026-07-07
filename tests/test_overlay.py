@@ -72,6 +72,18 @@ def test_db_overlay_allocate_ids_returns_a_list_of_recorded_keys(monkeypatch):
     assert keys[0] in state.allocate_keys
 
 
+def test_db_overlay_allocate_ids_derives_kind_from_key_template(monkeypatch):
+    """viur-core passes a Key template (not a bare string) to AllocateIDs;
+    the overlay reads ``.kind`` off it."""
+    import viur.core.db as db
+    install_db_overlay(monkeypatch)
+
+    keys = db.allocate_ids(db.Key("thing", None), count=2)
+
+    assert len(keys) == 2
+    assert all(k.kind == "thing" for k in keys)
+
+
 def test_db_overlay_put_allocates_key_for_keyless_entity(monkeypatch):
     import viur.core.db as db
     state = install_db_overlay(monkeypatch)
