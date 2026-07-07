@@ -18,6 +18,7 @@ Public surface:
 """
 from .fakes import DbState, FakeEntity, FakeKey, FakeQuery, FakeSortOrder
 from .modules import install_viur_core_mocks
+from .overlay import install_db_overlay, set_request
 
 __all__ = [
     "DbState",
@@ -26,6 +27,8 @@ __all__ = [
     "FakeQuery",
     "FakeSortOrder",
     "install_viur_core_mocks",
+    "install_db_overlay",
+    "set_request",
 ]
 
 __version__ = "0.1.0"

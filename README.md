@@ -88,6 +88,35 @@ them up in a `conftest.py`.
 | `patched_user`                | Set `current.user.get()` to a fake user dict                           |
 | `_viur_light_mock_reset_state`   | Autouse — resets the fake datastore singleton between tests            |
 
+## Overlay mode (real viur-core installed)
+
+The stand-ins above are for packages that have **no** viur-core installed. An
+*application* test suite is the opposite case: real viur-core is present and
+production code runs on the full framework (prototypes, bones, compute,
+skeletons). There you don't want to fake the framework — you only want to keep
+the Datastore off the network so tests run in CI. That's overlay mode: it
+monkeypatches just the external seams (`db` reads/writes, the request context)
+onto the in-memory `db_state`, leaving real bone serialization, compute bones
+and tree logic running.
+
+```python
+from viur.light_mock import install_db_overlay, set_request
+
+def test_writes_go_to_memory(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)     # patches db.get/put/delete/…
+    set_request(monkeypatch, kwargs={"parententry": "root"})
+
+    MyModule().add(...)                          # real viur-core code path
+
+    assert state.put_calls                       # observed the write in-memory
+```
+
+The pytest plugin **auto-detects** which mode applies: when a real `viur.core`
+is importable it leaves it untouched (so `install_db_overlay` patches the
+genuine modules); only when viur-core is absent does it inject the stand-ins.
+No configuration needed — the same package serves both.
+
 ## Public API
 
 If you need to drive the mocks from your own `conftest.py` (for example to
@@ -95,7 +124,8 @@ add a project-specific stand-in), import directly:
 
 ```python
 from viur.light_mock import (
-    install_viur_core_mocks,
+    install_viur_core_mocks,       # inject the fake viur.core.* hierarchy
+    install_db_overlay, set_request,  # overlay mode against a real viur-core
     FakeKey, FakeEntity, FakeQuery, FakeSortOrder, DbState,
 )
 ```
