@@ -7,6 +7,57 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Overlay mode replaces the datastore client** instead of monkeypatching
+  individual `db` functions. `install_db_overlay` swaps
+  `viur.core.db.transport.__client__` — plus the separate binding
+  `viur.core.db.utils` holds via its module-level `from`-import — for an
+  in-memory client. viur's own `get`/`put`/`delete`/`allocate_ids`/
+  `run_in_transaction` then execute for real against the store, so their
+  contracts are viur's and cannot drift away from it.
+
+  Everything below follows from that. Each was a place where the hand-written
+  stand-ins disagreed with production, in one direction or the other:
+
+  - `db.run_in_transaction` is intercepted now. Only the deprecated
+    `RunInTransaction` alias used to be, and `Skeleton.write` calls the lowercase
+    name — so every write test opened a real transaction against whatever project
+    the ambient credentials resolved to.
+  - `db.allocate_ids` raises `TypeError` for a non-`str` kind, as production does.
+    It used to accept a `Key`, turning a call that fails live into a green test.
+  - `db.AllocateIDs` returns a single `Key`, not a list.
+  - `db.put` and `db.delete` accept the list form (`put_multi`/`delete_multi`).
+  - `db.put` raises `ValueError` for a keyless entity instead of inventing a key.
+  - Batch `db.get([...])` **omits misses instead of padding with `None`**,
+    reversing the 0.2.0 behaviour noted below: `get_multi` reports misses only
+    when the caller passes a `missing` list, and viur passes none. Be aware that
+    this makes viur's own `if not all(db.get([...]))` guard in `RelationalBone`
+    unable to detect a missing key — the padding used to mask that.
+- Overlay mode **fails loudly on queries** rather than letting them reach the
+  network. There is no real client left to escape to, and the in-memory one has
+  no query support on purpose, so an unimplemented query path raises instead of
+  quietly returning results from a live datastore.
+- `DbState.get_result` pins only the single-key `get`. A pinned scalar cannot
+  sensibly travel through viur's batch branch, which sorts its result.
+
+### Removed
+
+- Overlay mode requires **viur-core 3.8+**. On 3.7 the datastore ships as the
+  compiled `viur-datastore`, which exposes no client to replace;
+  `install_db_overlay` raises `RuntimeError` explaining that instead of patching
+  nothing and looking like it worked.
+
+### Notes for contributors
+
+- The test suite is split by mode, because the plugin picks its mode from whether
+  a real `viur.core` is importable — so one environment can only exercise one
+  mode. `tests/` runs without viur-core, `tests_overlay/` with it, in sequence;
+  see the README's Development section.
+- Two behaviours are deliberately not reproduced by the in-memory client:
+  `transaction()` has no rollback (writes land immediately), and reads inside a
+  transaction do not see the pre-transaction state.
+
 ## [0.2.0] - 2026-07-07
 
 ### Added

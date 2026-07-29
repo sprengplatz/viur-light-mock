@@ -33,6 +33,20 @@ test = [
     "pytest-cov~=5.0",
     "coverage[toml]~=7.0",
 ]
+# Overlay mode runs against a *real* viur-core, so testing it needs one
+# installed. Kept in its own extra ON PURPOSE, never folded into `test`: the
+# pytest plugin picks its mode from whether viur.core is importable in the
+# environment (see README, "Overlay mode"). Installing viur-core alongside the
+# fake-mode tests would switch the whole environment to overlay mode and leave
+# `tests/` without the stand-ins it exists to exercise.
+#
+# One environment, one mode. Run the two test roots in sequence:
+#   pip install -e .[test]           && coverage run    -m pytest tests
+#   pip install -e .[test,overlay]   && coverage run -a -m pytest tests_overlay
+# ``-a`` appends, so the 100% gate sees both runs added together.
+overlay = [
+    "viur-core==3.9.0.dev6",
+]
 dev = [
     "spltz-viur-light-mock[test]",
     "build~=1.2",
@@ -70,6 +84,17 @@ addopts = [
 ]
 filterwarnings = [
     "error",
+    # viur-core 3.9.0.dev6 has an unescaped ``\d`` in a config.py docstring.
+    # Since Python 3.12 that is a SyntaxWarning, and as an error it becomes a
+    # SyntaxError at compile time — viur-core is then unimportable, so the whole
+    # overlay test root dies at collection. Only ever reproducible on a cold
+    # bytecode cache, which makes it a CI-only failure. Scoped to this one
+    # message so every other warning stays an error. Scoping it to the module as
+    # well does not work — a compile-time SyntaxWarning is not attributed to
+    # ``viur.core.config``. Consequence to be aware of: the same mistake in *our*
+    # own source would no longer fail the suite, and this package runs no linter
+    # that would catch it either.
+    "ignore:invalid escape sequence:SyntaxWarning",
 ]
 
 [tool.coverage.run]
