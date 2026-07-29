@@ -7,6 +7,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-29
+
 ### Added
 
 - **Store-backed queries in overlay mode.** After seeding, `db.Query(...)` /
@@ -144,6 +146,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Pytest fixtures: `db_state`, `freeze_time`, `make_query`, `patched_user`,
   plus an autouse state reset.
 
-[Unreleased]: https://github.com/sprengplatz/viur-light-mock/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sprengplatz/viur-light-mock/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sprengplatz/viur-light-mock/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sprengplatz/viur-light-mock/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sprengplatz/viur-light-mock/releases/tag/v0.1.0
