@@ -322,6 +322,137 @@ def test_a_query_without_an_explicit_limit_uses_the_configured_default(monkeypat
     assert len(db.Query("thing").run()) == conf.db.query_default_limit
 
 
+def test_iter_pages_past_the_first_batch_and_terminates(monkeypatch):
+    """``iter()`` pulls 100 at a time and loops while ``currentCursor`` is truthy
+    (query.py:793-797). With the cursor always None it would stop after the first
+    batch, so production code walking 250 entities would see 100 in tests and pass
+    — the same shape of lie this whole seam exists to remove."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(250):
+        _seed(db, state, "thing", i, n=i)
+
+    seen = list(db.Query("thing").iter())
+
+    assert len(seen) == 250
+
+
+def test_a_cursor_resumes_where_the_previous_run_stopped(monkeypatch):
+    """Round-trip through the public API, which is where the type asymmetry bites:
+    ``getCursor()`` base64-encodes **bytes** (query.py:507) while ``setCursor``
+    decodes to **str** (query.py:447). The fake emits bytes and accepts either."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(5):
+        _seed(db, state, "thing", i, n=i)
+
+    first = db.Query("thing").order(("n", db.SortOrder.Ascending))
+    page_one = first.run(limit=2)
+    cursor = first.getCursor()
+
+    assert cursor, "a truncated result must hand out a cursor"
+
+    second = db.Query("thing").order(("n", db.SortOrder.Ascending))
+    second.setCursor(cursor)
+    page_two = second.run(limit=2)
+
+    assert [e["n"] for e in page_one] == [0, 1]
+    assert [e["n"] for e in page_two] == [2, 3]
+
+
+def test_an_exhausted_query_hands_out_no_cursor(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(2):
+        _seed(db, state, "thing", i, n=i)
+
+    query = db.Query("thing")
+    query.run(limit=10)
+
+    assert query.getCursor() is None
+
+
+def test_end_cursor_bounds_the_result(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(5):
+        _seed(db, state, "thing", i, n=i)
+
+    first = db.Query("thing").order(("n", db.SortOrder.Ascending))
+    first.run(limit=3)
+
+    bounded = db.Query("thing").order(("n", db.SortOrder.Ascending))
+    bounded.setCursor(None, first.getCursor())
+
+    assert [e["n"] for e in bounded.run()] == [0, 1, 2]
+
+
+def test_count_counts_matching_entities(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(3):
+        _seed(db, state, "thing", i, n=i)
+    _seed(db, state, "other", 1, n=0)
+
+    assert db.Query("thing").count() == 3
+
+
+def test_count_applies_the_filters(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(5):
+        _seed(db, state, "thing", i, n=i)
+
+    assert db.Query("thing").filter("n >=", 3).count() == 2
+
+
+def test_count_is_capped_by_up_to(monkeypatch):
+    """``up_to`` reaches the real aggregation as a fetch limit, so it caps the
+    number reported, not just the work done."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(10):
+        _seed(db, state, "thing", i, n=i)
+
+    assert db.Query("thing").count(up_to=4) == 4
+
+
+def test_db_count_takes_a_bare_kind(monkeypatch):
+    """``db.count`` is public API and reachable without a Query at all."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    for i in range(3):
+        _seed(db, state, "thing", i, n=i)
+    _seed(db, state, "other", 1, n=0)
+
+    assert db.count(kind="thing") == 3
+
+
+def test_deprecated_db_Count_still_routes_to_the_store(monkeypatch):
+    """``db.Count`` is the deprecated wrapper and resolves ``count`` as a module
+    global at call time, so replacing that global is enough — and its
+    DeprecationWarning keeps firing, which a direct patch would have swallowed."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    _seed(db, state, "thing", 1, n=0)
+
+    with pytest.warns(DeprecationWarning):
+        assert db.Count(kind="thing") == 1
+
+
+def test_count_ignores_grouping(monkeypatch):
+    """Surprising but faithful: ``transport.count`` builds its aggregation from
+    the filters alone — orders and ``distinct`` never reach it. So a grouped query
+    counts rows, not groups."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    _seed(db, state, "thing", 1, group="a")
+    _seed(db, state, "thing", 2, group="a")
+    _seed(db, state, "thing", 3, group="b")
+
+    assert db.Query("thing").distinctOn(["group"]).count() == 3
+
+
 def test_relational_key_filter_navigates_into_a_denormalised_entity(monkeypatch):
     """Relational bones store a list of ``{"dest": <entity>, "rel": …}`` dicts,
     and viur filters them as ``bone.dest.__key__``. Flat ``entry.get(field)``

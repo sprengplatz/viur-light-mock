@@ -217,22 +217,27 @@ def _install_query_seam(monkeypatch, state: DbState) -> None:
     (query.py:706) and for the multi-query loop (694), and ``iter()`` (794).
     """
     import viur.core.db as db
+    import viur.core.db.transport as transport
     from viur.core.db.query import _entryMatchesQuery
 
     key_property = db.KEY_SPECIAL_PROPERTY
 
-    def _run_single_filter_query(self, query, limit, keys_only):
-        hits = [
+    def matching(kind, filters, or_filters):
+        """Entities of ``kind`` that satisfy the filters. Shared by the query
+        seam and by ``count``, which selects the same way but counts instead of
+        sorting."""
+        return [
             entity
             for entity in state.store.values()
             # A kindless query (kind None) is not restricted to one kind.
-            if (query.kind is None or entity.key.kind == query.kind)
+            if (kind is None or entity.key.kind == kind)
             and _entryMatchesQuery(
-                _dotted_view(entity, key_property),
-                query.filters,
-                query.or_filters,
+                _dotted_view(entity, key_property), filters, or_filters
             )
         ]
+
+    def _run_single_filter_query(self, query, limit, keys_only):
+        hits = matching(query.kind, query.filters, query.or_filters)
         # viur's own sorter, so the awkward cases stay viur's: a missing field, a
         # list value (smallest or largest depending on direction), types that
         # cannot be compared, the ordering an inequality filter implies, and the
@@ -286,20 +291,75 @@ def _install_query_seam(monkeypatch, state: DbState) -> None:
                     grouped.append(entity)
             hits = grouped
 
-        # No real paging: one fetch hands back everything, so ``iter()``
-        # terminates after the first round instead of looping forever.
-        query.currentCursor = None
+        # Cursors are offsets into this result, not opaque index positions.
+        # See the README for where that differs from the real thing; the case it
+        # gets right is the one that matters, ``iter()`` walking past its first
+        # 100-entity batch instead of stopping there and looking complete.
+        #
+        # Watch the types: ``getCursor()`` base64-encodes what it finds here and
+        # so needs **bytes** (query.py:507), while ``setCursor`` decodes to
+        # **str** (query.py:447) and ``iter()`` feeds the bytes straight back
+        # (query.py:797). So: emit bytes, accept either.
+        def cursor_offset(value):
+            if value is None:
+                return None
+            if isinstance(value, bytes):
+                return int(value.decode("ASCII"))
+            return int(value)
+
+        start = cursor_offset(query.startCursor) or 0
+        window = hits[start:cursor_offset(query.endCursor)]
 
         # ``run()`` resolves the limit before calling us — an explicit one, or
         # QueryDefinition.limit, which conf.db.query_default_limit seeds at 30 —
         # so it is always a non-negative int and needs no guard here. Honouring
         # it matters: a bare ``.fetch()`` really is capped in production, and a
         # fake that returned everything would hide that.
-        return hits[:limit]
+        page = window[:limit]
+
+        # Falsy when the window is exhausted, which is what ends ``iter()``'s
+        # loop (query.py:795).
+        query.currentCursor = (
+            str(start + len(page)).encode("ASCII")
+            if len(page) < len(window)
+            else None
+        )
+        return page
+
+    def _count(kind=None, up_to=2 ** 31 - 1, queryDefinition=None):
+        """Store-backed stand-in for ``transport.count``.
+
+        Mirrors what the real one builds its aggregation from: an explicit kind
+        wins over the definition's, filters and or_filters are applied — and
+        orders and ``distinct`` are ignored entirely. A grouped query therefore
+        counts rows, not groups. Surprising, but it is what production does.
+        """
+        filters = queryDefinition.filters if queryDefinition else {}
+        or_filters = queryDefinition.or_filters if queryDefinition else []
+        if not kind:
+            kind = queryDefinition.kind if queryDefinition else None
+        # ``up_to`` reaches the real aggregation as a fetch limit, so it caps the
+        # number reported.
+        return min(len(matching(kind, filters, or_filters)), up_to)
 
     monkeypatch.setattr(
         db.Query, "_run_single_filter_query", _run_single_filter_query
     )
+    # ``count`` is the one place where names still have to be patched, and
+    # deliberately so. Routing it through the client instead would mean
+    # interpreting the ``PropertyFilter`` objects that ``transport.count`` builds
+    # — that is, reimplementing the operator semantics one layer down, which is
+    # exactly what replacing the client avoids everywhere else. So the aggregation
+    # keeps raising on the client, and the three bindings that reach it are
+    # replaced instead. Each is a separate module-level ``from``-import:
+    #
+    #   transport.count   also serves the deprecated transport.Count / db.Count,
+    #                     which resolve the module global at call time, so their
+    #                     DeprecationWarning stays intact
+    #   db.count          the name application code calls
+    #   db.query.count    the name Query.count() calls
+    for module in (transport, db, db.query):
+        monkeypatch.setattr(module, "count", _count)
 
 
 def install_db_overlay(monkeypatch, *, state: DbState = db_state) -> DbState:

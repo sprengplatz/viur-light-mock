@@ -22,10 +22,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   indexes nested entity properties — with `__key__` injected at every level, so
   `__key__ =` and relational filters such as `project.dest.__key__ =` work.
 
-  Two limits worth knowing: there is no paging yet (one fetch returns everything
-  and `iter()` stops after the first round), and an entity that lacks the sort
-  field still appears in the result, because that is what `_resort_result` does —
-  the real Datastore would omit it for want of an index entry.
+  One thing to know: an entity that lacks the sort field still appears in the
+  result, because that is what `_resort_result` does — the real Datastore would
+  omit it for want of an index entry.
+
+- **Grouping via `distinctOn`**, applied after the sort and before the limit, so
+  which member of a group survives follows the ordering. The sort-order
+  constraint the service imposes is enforced (`distinct on` properties must not be
+  ordered after non-`distinct on` ones), because the client library does not check
+  it locally and a rejected query would otherwise pass in tests. Grouping on a
+  multi-valued property raises rather than inventing a grouping key for it.
+
+- **Cursors and `count`.** Cursors are offsets into the result: `startCursor`
+  resumes, `endCursor` bounds, and `currentCursor` is handed back until the window
+  is exhausted — which is what lets `iter()` walk past its first 100-entity batch
+  instead of stopping there and looking complete. `Query.count()`, `db.count` and
+  the deprecated `db.Count` all count from the store, applying filters only, the
+  way `transport.count` builds its aggregation: orders and `distinct` do not reach
+  it, so a grouped query counts rows rather than groups.
 
 ### Changed
 

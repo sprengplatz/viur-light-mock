@@ -126,9 +126,25 @@ from it. Requires **viur-core 3.8+**; on 3.7 the datastore lives in the compiled
 `viur-datastore` package, which exposes no client to replace, and
 `install_db_overlay` says so rather than patching nothing.
 
-Two behaviours are deliberately *not* reproduced: a `transaction()` has no
-rollback (writes land immediately), and `DbState.get_result` pins only the
-single-key `get`.
+Queries are served from the store too, one layer up: `Query._run_single_filter_query`
+is replaced so that viur's own `_entryMatchesQuery` does the matching and its
+`_resort_result` the sorting. Filters, ordering, limit, `distinctOn`, cursors and
+`count` all work; `iter()` pages properly rather than stopping after its first
+batch. Entities are matched against a dotted view of themselves, with `__key__`
+injected at every level, so relational filters like `project.dest.__key__ =` hit.
+
+Deliberately *not* reproduced:
+
+- `transaction()` has no rollback — writes land immediately, and reads inside a
+  transaction do not see the pre-transaction state.
+- Cursors are offsets, not opaque index positions. Insert or delete between two
+  fetches and the window shifts differently than it would against the service.
+- A grouped query returns whole entities; a real projection query returns only the
+  projected properties.
+- An entity that lacks the sort field still appears, because that is what
+  `_resort_result` does. The Datastore would omit it for want of an index entry.
+- No index simulation, so nothing raises "needs index".
+- `DbState.get_result` pins only the single-key `get`.
 
 Because the mode follows the environment, a test suite can only exercise one of
 them per run — see [Development](#development) for how this package tests both.
