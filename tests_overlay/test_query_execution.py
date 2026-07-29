@@ -12,6 +12,8 @@ level for this package: it exercises the real query-building code (filter
 parsing, operator normalisation, QueryDefinition) without needing project
 skeletons, which only an application test suite has.
 """
+import pytest
+
 from viur.light_mock.overlay import install_db_overlay
 
 
@@ -86,6 +88,80 @@ def test_key_filter_uses_the_entity_key(monkeypatch):
     assert result.run() == [wanted]
 
 
+def test_in_filter_matches_any_of_the_listed_values(monkeypatch):
+    """``IN`` is a native single-query operator in viur-core 3.9 — it is not split
+    into a multi-query — and ``_entryMatchesQuery`` implements it, so the union
+    comes for free."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    red = _seed(db, state, "thing", 1, colour="red")
+    blue = _seed(db, state, "thing", 2, colour="blue")
+    _seed(db, state, "thing", 3, colour="green")
+
+    result = db.Query("thing").filter("colour IN", ["red", "blue"]).run()
+
+    assert len(result) == 2
+    assert red in result and blue in result
+
+
+def test_not_equal_filter_excludes_the_value(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    _seed(db, state, "thing", 1, colour="red")
+    kept = _seed(db, state, "thing", 2, colour="blue")
+
+    assert db.Query("thing").filter("colour !=", "red").run() == [kept]
+
+
+def test_multi_query_results_are_merged_and_deduplicated_by_viur(monkeypatch):
+    """A list-valued external filter on a key bone makes viur build a real
+    multi-query (``bones/key.py``): one QueryDefinition per key, no custom merge,
+    so ``_merge_multi_query_results`` unions and de-duplicates above our seam.
+
+    The point of this test is what it does *not* find: the same entity is matched
+    by both sub-queries, yet appears once. Nothing in the overlay de-duplicates —
+    if it did, this would be testing our code instead of viur's.
+    """
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    first = _seed(db, state, "thing", 1, n=1)
+    second = _seed(db, state, "thing", 2, n=2)
+
+    query = db.Query("thing")
+    # Shaped exactly like bones/key.py builds it: a QueryDefinition per value.
+    query.queries = [
+        db.QueryDefinition("thing", {"n >=": 1}, []),   # matches both
+        db.QueryDefinition("thing", {"n =": 2}, []),    # matches the second again
+    ]
+    result = query.run()
+
+    assert len(result) == 2, "the overlapping hit must appear once, not twice"
+    assert first in result and second in result
+
+
+def test_relation_parent_jump_stays_in_the_store(monkeypatch):
+    """``_fixKind`` (query.py) jumps from a ``viur-relations`` hit to its parent
+    entity, the shape a relational filter produces. It uses the ``get`` that
+    ``query.py`` bound with a module-level from-import — which still resolves to
+    the in-memory client, because the overlay replaced the *client* rather than
+    the ``db`` functions. No extra seam needed; pinning that here so a change of
+    approach would show up."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    parent = _seed(db, state, "thing", 1, n=1)
+    relation = db.Entity(db.Key("viur-relations", 1, parent=parent.key))
+    relation["src"] = parent
+    state.store[relation.key] = relation
+
+    # What RelationalBone.buildDBFilter does: rewrite the query onto viur-relations
+    # while origKind stays the kind the caller asked for.
+    query = db.Query("thing")
+    query.kind = "viur-relations"
+    query.queries = db.QueryDefinition("viur-relations", {}, [])
+
+    assert query.run() == [parent]
+
+
 def test_order_sorts_ascending_and_descending(monkeypatch):
     import viur.core.db as db
     state = install_db_overlay(monkeypatch)
@@ -128,6 +204,99 @@ def test_an_entity_missing_the_sort_field_still_appears(monkeypatch):
 
     assert len(result) == 2
     assert with_field in result and without_field in result
+
+
+def test_distinct_keeps_the_first_entity_per_value(monkeypatch):
+    """``distinctOn`` groups the result. Which entity survives per group follows
+    the sort order, so the two have to be applied in that sequence."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    first_a = _seed(db, state, "thing", 1, group="a", n=1)
+    _seed(db, state, "thing", 2, group="a", n=2)
+    first_b = _seed(db, state, "thing", 3, group="b", n=3)
+
+    result = (
+        db.Query("thing")
+        .order(("n", db.SortOrder.Ascending))
+        .distinctOn(["group"])
+        .run()
+    )
+
+    assert result == [first_a, first_b]
+
+
+def test_distinct_on_several_fields_groups_by_the_combination(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    a1 = _seed(db, state, "thing", 1, group="a", kind_="x", n=1)
+    _seed(db, state, "thing", 2, group="a", kind_="x", n=2)
+    a2 = _seed(db, state, "thing", 3, group="a", kind_="y", n=3)
+
+    result = (
+        db.Query("thing")
+        .order(("n", db.SortOrder.Ascending))
+        .distinctOn(["group", "kind_"])
+        .run()
+    )
+
+    assert result == [a1, a2]
+
+
+def test_distinct_applies_before_the_limit(monkeypatch):
+    """Otherwise a limit of 2 over three rows in two groups would return one row."""
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    first_a = _seed(db, state, "thing", 1, group="a", n=1)
+    _seed(db, state, "thing", 2, group="a", n=2)
+    first_b = _seed(db, state, "thing", 3, group="b", n=3)
+
+    result = (
+        db.Query("thing")
+        .order(("n", db.SortOrder.Ascending))
+        .distinctOn(["group"])
+        .run(limit=2)
+    )
+
+    assert result == [first_a, first_b]
+
+
+def test_distinct_rejects_a_sort_order_that_the_datastore_would_reject(monkeypatch):
+    """Google's rule, verbatim: "If ordering is specified, the set of properties
+    specified in the `distinct on` clause must appear before any non-`distinct on`
+    properties in the sort orders."
+
+    The fake must not be more permissive than the service here — otherwise a query
+    the Datastore rejects would pass in tests.
+    """
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    _seed(db, state, "thing", 1, group="a", n=1)
+
+    query = (
+        db.Query("thing")
+        .order(("n", db.SortOrder.Ascending), ("group", db.SortOrder.Ascending))
+        .distinctOn(["group"])
+    )
+
+    with pytest.raises(ValueError, match="distinct"):
+        query.run()
+
+
+def test_distinct_accepts_a_sort_order_that_leads_with_it(monkeypatch):
+    import viur.core.db as db
+    state = install_db_overlay(monkeypatch)
+    first_a = _seed(db, state, "thing", 1, group="a", n=1)
+    _seed(db, state, "thing", 2, group="a", n=2)
+    first_b = _seed(db, state, "thing", 3, group="b", n=3)
+
+    result = (
+        db.Query("thing")
+        .order(("group", db.SortOrder.Ascending), ("n", db.SortOrder.Ascending))
+        .distinctOn(["group"])
+        .run()
+    )
+
+    assert result == [first_a, first_b]
 
 
 def test_limit_truncates_the_result(monkeypatch):

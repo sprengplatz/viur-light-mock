@@ -239,6 +239,53 @@ def _install_query_seam(monkeypatch, state: DbState) -> None:
         # SortOrder.Inverted* flip.
         hits = self._resort_result(hits, query.filters, query.orders or [])
 
+        if query.distinct and query.orders:
+            # Datastore's rule for a grouped projection query, verbatim: "If
+            # ordering is specified, the set of properties specified in the
+            # `distinct on` clause must appear before any non-`distinct on`
+            # properties in the sort orders."
+            #
+            # Note what it does *not* say: a distinct property need not appear in
+            # the sort orders at all, and without any ordering there is no
+            # constraint. Only the relative position is checked.
+            #
+            # Enforced here because the service enforces it: without this, a query
+            # the Datastore rejects would pass in tests.
+            distinct_fields = set(query.distinct)
+            preceding_other = None
+            for order in query.orders:
+                if order.name not in distinct_fields:
+                    preceding_other = order.name
+                elif preceding_other is not None:
+                    raise ValueError(
+                        f"invalid grouped query: the distinct property "
+                        f"{order.name!r} is ordered after {preceding_other!r}, "
+                        f"which is not in distinct_on. Datastore requires the "
+                        f"distinct_on properties to come first in the sort order."
+                    )
+
+        if query.distinct:
+            # ``distinctOn`` groups the result; which member of a group survives
+            # follows the sort order, so this has to come after the sort and
+            # before the limit.
+            #
+            # A multi-valued property has no grouping semantics we could point at
+            # in the Datastore's behaviour, so nothing is invented here: the
+            # unhashable value raises, loudly, instead of being silently coerced
+            # into some order-dependent tuple.
+            def group_key(entity):
+                flat = _dotted_view(entity, key_property)
+                return tuple(flat.get(field) for field in query.distinct)
+
+            seen = set()
+            grouped = []
+            for entity in hits:
+                marker = group_key(entity)
+                if marker not in seen:
+                    seen.add(marker)
+                    grouped.append(entity)
+            hits = grouped
+
         # No real paging: one fetch hands back everything, so ``iter()``
         # terminates after the first round instead of looping forever.
         query.currentCursor = None
