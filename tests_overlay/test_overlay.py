@@ -1,16 +1,16 @@
-"""Tests for overlay mode — patch a *real* viur-core's external seams onto db_state.
+"""Tests for overlay mode — a real viur-core wired to an in-memory datastore.
 
-Unlike ``install_viur_core_mocks`` (which replaces viur.core wholesale for
-packages that have no viur-core installed), the overlay only redirects the
-Datastore/request/task seams an application's real viur-core reaches through,
-so the full framework keeps running while I/O stays in-memory.
+``install_db_overlay`` swaps the *datastore client*, so everything asserted here
+is produced by viur's own ``db`` functions running for real. See
+``test_seam_contracts.py`` for the contract-parity proof, and ``conftest.py`` for
+why this lives in its own test root.
 
-Note: ``viur.core.db`` / ``viur.core.current`` are imported *inside* each test,
-not at module level. Other tests in this suite re-run ``install_viur_core_mocks``
-and swap the fake module objects in ``sys.modules``; a module-level binding would
-go stale and point at a different object than the one ``install_db_overlay``
-patches.
+``viur.core.db`` is imported *inside* each test rather than at module level, so
+each test states plainly which viur it expects — the package's other test root
+installs the stand-ins into ``sys.modules`` and never restores them.
 """
+import pytest
+
 from viur.light_mock.overlay import install_db_overlay, set_request
 
 
@@ -41,6 +41,8 @@ def test_db_overlay_delete_removes_entity_and_records_call(monkeypatch):
 
 
 def test_db_overlay_get_returns_pinned_result_when_sentinel_overridden(monkeypatch):
+    """``DbState.get_result`` pins the single-key form only. A pinned scalar
+    cannot travel through viur's batch branch, which sorts the result."""
     import viur.core.db as db
     state = install_db_overlay(monkeypatch)
     pinned = db.Entity(db.Key("thing", 99))
@@ -48,18 +50,6 @@ def test_db_overlay_get_returns_pinned_result_when_sentinel_overridden(monkeypat
 
     # even for a key that was never stored, get hands back the pinned result
     assert db.get(db.Key("thing", 1)) is pinned
-
-
-def test_db_overlay_get_batch_returns_list_aligned_to_input_keys(monkeypatch):
-    import viur.core.db as db
-    state = install_db_overlay(monkeypatch)
-    found = db.Entity(db.Key("thing", 1))
-    db.put(found)
-    missing_key = db.Key("thing", 2)
-
-    result = db.get([found.key, missing_key])
-
-    assert result == [found, None]
 
 
 def test_db_overlay_allocate_ids_returns_a_list_of_recorded_keys(monkeypatch):
@@ -72,29 +62,6 @@ def test_db_overlay_allocate_ids_returns_a_list_of_recorded_keys(monkeypatch):
     assert keys[0] in state.allocate_keys
 
 
-def test_db_overlay_allocate_ids_derives_kind_from_key_template(monkeypatch):
-    """viur-core passes a Key template (not a bare string) to AllocateIDs;
-    the overlay reads ``.kind`` off it."""
-    import viur.core.db as db
-    install_db_overlay(monkeypatch)
-
-    keys = db.allocate_ids(db.Key("thing", None), count=2)
-
-    assert len(keys) == 2
-    assert all(k.kind == "thing" for k in keys)
-
-
-def test_db_overlay_put_allocates_key_for_keyless_entity(monkeypatch):
-    import viur.core.db as db
-    state = install_db_overlay(monkeypatch)
-
-    entity = db.Entity()  # keyless — mirrors a freshly cloned skeleton
-    db.put(entity)
-
-    assert entity.key is not None
-    assert state.store[entity.key] is entity
-
-
 def test_db_overlay_runs_transactions_inline_and_returns_result(monkeypatch):
     import viur.core.db as db
     install_db_overlay(monkeypatch)
@@ -104,7 +71,11 @@ def test_db_overlay_runs_transactions_inline_and_returns_result(monkeypatch):
         seen.append((a, b))
         return a + b
 
-    result = db.RunInTransaction(txn, 2, 3)
+    # RunInTransaction is deprecated in viur-core 3.8+. The real wrapper runs now
+    # that the overlay no longer replaces the function, so the warning is part of
+    # the contract rather than noise.
+    with pytest.warns(DeprecationWarning):
+        result = db.RunInTransaction(txn, 2, 3)
 
     assert result == 5
     assert seen == [(2, 3)]

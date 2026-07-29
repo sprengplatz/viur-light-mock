@@ -117,6 +117,38 @@ is importable it leaves it untouched (so `install_db_overlay` patches the
 genuine modules); only when viur-core is absent does it inject the stand-ins.
 No configuration needed — the same package serves both.
 
+What overlay mode replaces is the **datastore client** itself
+(`viur.core.db.transport.__client__`, plus the separate binding `viur.core.db.utils`
+holds). viur's own `get`/`put`/`delete`/`allocate_ids`/`run_in_transaction` then
+run for real against an in-memory store, so their contracts — batch shapes,
+return values, error cases — are viur's, not restated here and unable to drift
+from it. Requires **viur-core 3.8+**; on 3.7 the datastore lives in the compiled
+`viur-datastore` package, which exposes no client to replace, and
+`install_db_overlay` says so rather than patching nothing.
+
+Queries are served from the store too, one layer up: `Query._run_single_filter_query`
+is replaced so that viur's own `_entryMatchesQuery` does the matching and its
+`_resort_result` the sorting. Filters, ordering, limit, `distinctOn`, cursors and
+`count` all work; `iter()` pages properly rather than stopping after its first
+batch. Entities are matched against a dotted view of themselves, with `__key__`
+injected at every level, so relational filters like `project.dest.__key__ =` hit.
+
+Deliberately *not* reproduced:
+
+- `transaction()` has no rollback — writes land immediately, and reads inside a
+  transaction do not see the pre-transaction state.
+- Cursors are offsets, not opaque index positions. Insert or delete between two
+  fetches and the window shifts differently than it would against the service.
+- A grouped query returns whole entities; a real projection query returns only the
+  projected properties.
+- An entity that lacks the sort field still appears, because that is what
+  `_resort_result` does. The Datastore would omit it for want of an index entry.
+- No index simulation, so nothing raises "needs index".
+- `DbState.get_result` pins only the single-key `get`.
+
+Because the mode follows the environment, a test suite can only exercise one of
+them per run — see [Development](#development) for how this package tests both.
+
 ## Public API
 
 If you need to drive the mocks from your own `conftest.py` (for example to
@@ -139,17 +171,36 @@ out of the box.
 
 ## Development
 
+The suite is split by mode, because the mode follows the environment: the plugin
+injects the stand-ins only when no real viur-core is importable. So `tests/`
+(stand-ins) needs an environment *without* viur-core, and `tests_overlay/`
+(overlay against the real framework) needs one *with* it. Installing both at once
+would put the whole environment in overlay mode and leave `tests/` without the
+stand-ins it exists to exercise.
+
+Run them in sequence, installing viur-core in between:
+
 ```bash
 git clone https://github.com/sprengplatz/viur-light-mock
 cd viur-light-mock
-pip install -e ".[dev]"
 
 # Run via `coverage run` so the plugin import itself is instrumented.
 # pytest-cov would start measuring after the entry-point plugin loads,
 # leaving viur.light_mock.plugin partially uncovered.
-coverage run -m pytest
-coverage report --fail-under=100
+
+pip install -e ".[dev]"
+coverage run -m pytest tests                  # stand-in mode
+
+pip install -e ".[dev,overlay]"
+coverage run -a -m pytest tests_overlay       # overlay mode; -a appends
+
+coverage report --fail-under=100              # gate over both runs
 ```
+
+`tests_overlay/conftest.py` keeps that environment offline: viur-core calls
+`google.auth.default()` at import time, so it is stubbed with anonymous
+credentials and a throwaway project id, and `DATASTORE_EMULATOR_HOST` points at a
+dead port. No credentials, real or fake, are needed or stored.
 
 ## License
 

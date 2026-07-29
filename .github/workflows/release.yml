@@ -32,15 +32,25 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install
+      # One environment serves one mode (the plugin decides by whether viur.core
+      # is importable), so the two test roots run in sequence with viur-core
+      # installed in between. Same shape as test.yml.
+      - name: Install (fake mode - deliberately without viur-core)
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .[test]
 
-      - name: Tests with 100% coverage gate
-        run: |
-          coverage run -m pytest
-          coverage report --fail-under=100
+      - name: Fake-mode tests
+        run: coverage run -m pytest tests
+
+      - name: Install viur-core (switches the environment to overlay mode)
+        run: python -m pip install -e .[test,overlay]
+
+      - name: Overlay-mode tests
+        run: coverage run -a -m pytest tests_overlay
+
+      - name: 100% coverage gate over both modes
+        run: coverage report --fail-under=100
 
   # ----- Verify the tag matches __version__ ---------------------------------
   version-check:
