@@ -84,17 +84,24 @@ addopts = [
 ]
 filterwarnings = [
     "error",
-    # viur-core 3.9.0.dev6 has an unescaped ``\d`` in a config.py docstring.
-    # Since Python 3.12 that is a SyntaxWarning, and as an error it becomes a
-    # SyntaxError at compile time — viur-core is then unimportable, so the whole
-    # overlay test root dies at collection. Only ever reproducible on a cold
-    # bytecode cache, which makes it a CI-only failure. Scoped to this one
-    # message so every other warning stays an error. Scoping it to the module as
-    # well does not work — a compile-time SyntaxWarning is not attributed to
-    # ``viur.core.config``. Consequence to be aware of: the same mistake in *our*
-    # own source would no longer fail the suite, and this package runs no linter
-    # that would catch it either.
+    # Everything below is the price of importing a real viur-core into a suite
+    # that treats warnings as errors: its dependency chain warns, and those
+    # warnings are not ours to fix. Each entry is scoped to one message so any
+    # *other* warning still fails the run. Both are Python-3.12-only, which is
+    # why they only ever showed up in CI.
+    #
+    # viur-core 3.9.0.dev6 has an unescaped ``\d`` in a config.py docstring. Since
+    # 3.12 that is a SyntaxWarning, and as an error it becomes a SyntaxError at
+    # compile time — viur-core is then unimportable and the whole overlay root
+    # dies at collection. Only reproducible on a cold bytecode cache. Scoping it
+    # to the module does not work: a compile-time SyntaxWarning is not attributed
+    # to ``viur.core.config``. So this one also covers our own source, and the
+    # package runs no linter that would catch the same mistake — worth knowing.
     "ignore:invalid escape sequence:SyntaxWarning",
+    # webob imports the stdlib ``cgi`` module (webob/compat.py), reached via
+    # viur.core.request. On 3.13 stdlib ``cgi`` is gone and ``legacy-cgi`` stands
+    # in without warning; on 3.12 it is still there and deprecated.
+    "ignore:'cgi' is deprecated:DeprecationWarning",
 ]
 
 [tool.coverage.run]
