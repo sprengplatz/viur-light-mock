@@ -7,6 +7,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Store-backed queries in overlay mode.** After seeding, `db.Query(...)` /
+  `skel.all()` returns matching entities from the in-memory store instead of
+  reaching for the datastore. Filters, ordering and the limit are all viur's own
+  work: the seam is the method `Query._run_single_filter_query`, which hands over
+  `self`, so matching runs through viur's `_entryMatchesQuery` and sorting through
+  its `_resort_result`. Operator semantics (`=`, `<`, `<=`, `>`, `>=`, `IN`,
+  `NOT_IN`, `!=`, any()-semantics on multi-valued properties, OR groups) are
+  therefore not reimplemented and cannot drift.
+
+  Entities are matched against a dotted view of themselves, the way the Datastore
+  indexes nested entity properties — with `__key__` injected at every level, so
+  `__key__ =` and relational filters such as `project.dest.__key__ =` work.
+
+  Two limits worth knowing: there is no paging yet (one fetch returns everything
+  and `iter()` stops after the first round), and an entity that lacks the sort
+  field still appears in the result, because that is what `_resort_result` does —
+  the real Datastore would omit it for want of an index entry.
+
 ### Changed
 
 - **Overlay mode replaces the datastore client** instead of monkeypatching

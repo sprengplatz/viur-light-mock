@@ -152,6 +152,109 @@ class _StoreTransaction:
         self.id = id_
 
 
+def _dotted_view(entity, key_property: str) -> dict:
+    """Flatten an entity to the dotted paths viur filters by.
+
+    ``key_property`` is viur's ``KEY_SPECIAL_PROPERTY`` (``"__key__"``), handed in
+    rather than imported: this module is loaded in both modes, so it must not
+    import viur at module level, and copying the constant would be one more thing
+    that can drift.
+
+    The Datastore indexes nested entity properties under dotted names, and viur
+    filters accordingly — ``project.dest.__key__`` for a relational bone, whose
+    value on the entity is a list of ``{"dest": <entity>, "rel": …}`` dicts.
+    viur's ``_entryMatchesQuery`` reads candidates with a plain
+    ``entry.get(field)``, so it needs that flattened shape; being duck-typed, a
+    plain dict is all it wants.
+
+    Two details carry weight:
+
+    * ``__key__`` is injected at every level. It is not a dict item anywhere — a
+      key lives on ``.key`` — so without this neither ``__key__ =`` nor
+      ``x.dest.__key__ =`` could ever match.
+    * A path reached more than once (via a list of sub-entities) collects a list
+      of values, which is what gives ``_entryMatchesQuery`` the any()-semantics
+      the multi-valued index has.
+    """
+    flat: dict = {}
+
+    def add(path: str, value) -> None:
+        if path not in flat:
+            flat[path] = value
+        elif isinstance(flat[path], list):
+            flat[path].append(value)
+        else:
+            flat[path] = [flat[path], value]
+
+    def walk(prefix: str, value) -> None:
+        if isinstance(value, dict):
+            key = getattr(value, "key", None)
+            if key is not None:
+                add(f"{prefix}{key_property}", key)
+            for name, sub in value.items():
+                walk(f"{prefix}{name}.", sub)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(prefix, item)
+        else:
+            add(prefix[:-1], value)  # drop the trailing dot
+
+    walk("", entity)
+    return flat
+
+
+def _install_query_seam(monkeypatch, state: DbState) -> None:
+    """Serve queries from the store, using viur's own matcher and sorter.
+
+    The seam is the *method* ``Query._run_single_filter_query``, not the
+    transport function ``run_single_filter``: ``query.py`` binds that name with a
+    module-level ``from``-import, so patching it in ``transport`` has no effect.
+    The method also hands us ``self``, which is the point — ``_resort_result``
+    below is viur's own sorting, quirks included, rather than a second
+    implementation of it.
+
+    One method covers every execution path: ``run()`` for a single query
+    (query.py:706) and for the multi-query loop (694), and ``iter()`` (794).
+    """
+    import viur.core.db as db
+    from viur.core.db.query import _entryMatchesQuery
+
+    key_property = db.KEY_SPECIAL_PROPERTY
+
+    def _run_single_filter_query(self, query, limit, keys_only):
+        hits = [
+            entity
+            for entity in state.store.values()
+            # A kindless query (kind None) is not restricted to one kind.
+            if (query.kind is None or entity.key.kind == query.kind)
+            and _entryMatchesQuery(
+                _dotted_view(entity, key_property),
+                query.filters,
+                query.or_filters,
+            )
+        ]
+        # viur's own sorter, so the awkward cases stay viur's: a missing field, a
+        # list value (smallest or largest depending on direction), types that
+        # cannot be compared, the ordering an inequality filter implies, and the
+        # SortOrder.Inverted* flip.
+        hits = self._resort_result(hits, query.filters, query.orders or [])
+
+        # No real paging: one fetch hands back everything, so ``iter()``
+        # terminates after the first round instead of looping forever.
+        query.currentCursor = None
+
+        # ``run()`` resolves the limit before calling us — an explicit one, or
+        # QueryDefinition.limit, which conf.db.query_default_limit seeds at 30 —
+        # so it is always a non-negative int and needs no guard here. Honouring
+        # it matters: a bare ``.fetch()`` really is capped in production, and a
+        # fake that returned everything would hide that.
+        return hits[:limit]
+
+    monkeypatch.setattr(
+        db.Query, "_run_single_filter_query", _run_single_filter_query
+    )
+
+
 def install_db_overlay(monkeypatch, *, state: DbState = db_state) -> DbState:
     """Point a real ``viur.core.db`` at an in-memory store.
 
@@ -180,6 +283,8 @@ def install_db_overlay(monkeypatch, *, state: DbState = db_state) -> DbState:
     # function (circular-import workaround) and needs no patch.
     monkeypatch.setattr(transport, "__client__", client)
     monkeypatch.setattr(db_utils, "__client__", client)
+
+    _install_query_seam(monkeypatch, state)
     return state
 
 
